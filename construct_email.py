@@ -8,6 +8,16 @@ import smtplib
 import datetime
 from loguru import logger
 
+import time
+from contextlib import contextmanager
+
+@contextmanager
+def time_block(name: str):
+    start = time.perf_counter()
+    yield
+    end = time.perf_counter()
+    print(f"[{name}] took {end - start:.4f} seconds")
+
 framework = """
 <!DOCTYPE HTML>
 <html>
@@ -46,6 +56,8 @@ To unsubscribe, remove your email in your Github Action setting.
 </html>
 """
 
+
+
 def get_empty_html():
   block_template = """
   <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
@@ -58,7 +70,7 @@ def get_empty_html():
   """
   return block_template
 
-def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, pdf_url:str, code_url:str=None, affiliations:str=None):
+def get_block_html(title:str, authors:str, rate:str, explaination: str, arxiv_id:str, abstract:str, pdf_url:str, code_url:str=None, affiliations:str=None):
     code = f'<a href="{code_url}" style="display: inline-block; text-decoration: none; font-size: 14px; font-weight: bold; color: #fff; background-color: #5bc0de; padding: 8px 16px; border-radius: 4px; margin-left: 8px;">Code</a>' if code_url else ''
     block_template = """
     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
@@ -86,6 +98,11 @@ def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, 
     </tr>
     <tr>
         <td style="font-size: 14px; color: #333; padding: 8px 0;">
+            <strong>recommendation<strong> {explaination}
+        </td>
+    </tr>
+    <tr>
+        <td style="font-size: 14px; color: #333; padding: 8px 0;">
             <strong>TLDR:</strong> {abstract}
         </td>
     </tr>
@@ -98,13 +115,13 @@ def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, 
     </tr>
 </table>
 """
-    return block_template.format(title=title, authors=authors,rate=rate,arxiv_id=arxiv_id, abstract=abstract, pdf_url=pdf_url, code=code, affiliations=affiliations)
+    return block_template.format(title=title, authors=authors, rate=rate, explaination=explaination, arxiv_id=arxiv_id, abstract=abstract, pdf_url=pdf_url, code=code, affiliations=affiliations)
 
 def get_stars(score:float):
     full_star = '<span class="full-star">⭐</span>'
     half_star = '<span class="half-star">⭐</span>'
-    low = 6
-    high = 8
+    low = 0.2
+    high = 0.9
     if score <= low:
         return ''
     elif score >= high:
@@ -119,23 +136,38 @@ def get_stars(score:float):
 
 def render_email(papers:list[ArxivPaper]):
     parts = []
-    if len(papers) == 0 :
+    if len(papers) == 0:
         return framework.replace('__CONTENT__', get_empty_html())
-    
-    for p in tqdm(papers,desc='Rendering Email'):
+
+    for p in tqdm(papers, desc='Rendering Email'):
         rate = get_stars(p.score)
+
+        logger.debug(f"p.authors: {p.authors}")
         authors = [a.name for a in p.authors[:5]]
         authors = ', '.join(authors)
+
+        logger.debug(f"authors: {authors}")
         if len(p.authors) > 5:
-            authors += ', ...'
-        if p.affiliations is not None:
-            affiliations = p.affiliations[:5]
-            affiliations = ', '.join(affiliations)
-            if len(p.affiliations) > 5:
-                affiliations += ', ...'
-        else:
-            affiliations = 'Unknown Affiliation'
-        parts.append(get_block_html(p.title, authors,rate,p.arxiv_id ,p.tldr, p.pdf_url, p.code_url, affiliations))
+            logger.debug(f">5 authors")
+            authors += ', et al.'
+            # logger.debug(f">5 authors: {authors}")
+            # logger.debug(f"p.affiliations: {p.affiliations}")
+            # if p.affiliations is not None:
+            #     logger.debug(f"p.affiliations: {p.affiliations}")
+            #     affiliations = p.affiliations[:5]
+            #     affiliations = ', '.join(affiliations)
+            #     logger.debug(f"affiliations: {affiliations}")
+
+            #     if len(p.affiliations) > 5:
+            #         affiliations += ', ...'
+            # else:
+            #     affiliations = 'Unknown Affiliation'
+
+        # logger.debug(f"affiliations: {affiliations}")
+        parts.append(get_block_html(
+            p.title, authors, rate, p.explanation, p.arxiv_id, p.tldr,
+            p.pdf_url, p.code_url
+        ))
 
     content = '<br>' + '</br><br>'.join(parts) + '</br>'
     return framework.replace('__CONTENT__', content)

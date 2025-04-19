@@ -64,11 +64,11 @@ def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
 
     else:
         logger.debug("Retrieve 5 arxiv papers regardless of the date.")
-        search = arxiv.Search(query='cat:cs.AI', sort_by=arxiv.SortCriterion.SubmittedDate)
+        search = arxiv.Search(query='cat:hep-ex', sort_by=arxiv.SortCriterion.SubmittedDate)
         papers = []
         for i in client.results(search):
             papers.append(ArxivPaper(i))
-            if len(papers) == 5:
+            if len(papers) == 2:
                 break
 
     return papers
@@ -103,6 +103,7 @@ if __name__ == '__main__':
     add_argument('--zotero_id', type=str, help='Zotero user ID')
     add_argument('--zotero_key', type=str, help='Zotero API key')
     add_argument('--zotero_ignore',type=str,help='Zotero collection to ignore, using gitignore-style pattern.')
+    add_argument('--interest_stat', type=str, help='Research Interest Statement')
     add_argument('--send_empty', type=bool, help='If get no arxiv paper, send empty email',default=False)
     add_argument('--max_paper_num', type=int, help='Maximum number of papers to recommend',default=100)
     add_argument('--arxiv_query', type=str, help='Arxiv search query')
@@ -155,7 +156,8 @@ if __name__ == '__main__':
         logger.add(sys.stdout, level="INFO")
 
     logger.info("Retrieving Zotero corpus...")
-    corpus = get_zotero_corpus(args.zotero_id, args.zotero_key)
+    # corpus = get_zotero_corpus(args.zotero_id, args.zotero_key) # TODO: add cache
+    corpus = []
     logger.info(f"Retrieved {len(corpus)} papers from Zotero.")
     if args.zotero_ignore:
         logger.info(f"Ignoring papers in:\n {args.zotero_ignore}...")
@@ -163,13 +165,13 @@ if __name__ == '__main__':
         logger.info(f"Remaining {len(corpus)} papers after filtering.")
     logger.info("Retrieving Arxiv papers...")
     papers = get_arxiv_paper(args.arxiv_query, args.debug)
+
     if len(papers) == 0:
         logger.info("No new papers found. Yesterday maybe a holiday and no one submit their work :). If this is not the case, please check the ARXIV_QUERY.")
         if not args.send_empty:
           exit(0)
     else:
         logger.info("Reranking papers...")
-        papers = rerank_paper(papers, corpus)
         if args.max_paper_num != -1:
             papers = papers[:args.max_paper_num]
         if args.use_llm_api:
@@ -178,6 +180,7 @@ if __name__ == '__main__':
         else:
             logger.info("Using Local LLM as global LLM.")
             set_global_llm(lang=args.language)
+        papers = rerank_paper(papers, args.interest_stat)
 
     html = render_email(papers)
     logger.info("Sending email...")
