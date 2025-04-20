@@ -98,7 +98,7 @@ def get_block_html(title:str, authors:str, rate:str, explaination: str, arxiv_id
     </tr>
     <tr>
         <td style="font-size: 14px; color: #333; padding: 8px 0;">
-            <strong>recommendation<strong> {explaination}
+            <strong>Recommendation:<strong> {explaination}
         </td>
     </tr>
     <tr>

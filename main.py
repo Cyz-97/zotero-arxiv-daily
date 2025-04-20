@@ -1,10 +1,11 @@
 import arxiv
 import argparse
-import os
+import os, time
 import sys
 from dotenv import load_dotenv
 load_dotenv(override=True)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+from datetime import datetime
 from pyzotero import zotero
 from recommender import rerank_paper
 from construct_email import render_email, send_email
@@ -13,7 +14,7 @@ from loguru import logger
 from gitignore_parser import parse_gitignore
 from tempfile import mkstemp
 from paper import ArxivPaper
-from llm import set_global_llm
+from llm import set_global_llm, get_llm
 import feedparser
 
 def get_zotero_corpus(id:str,key:str) -> list[dict]:
@@ -45,6 +46,70 @@ def filter_corpus(corpus:list[dict], pattern:str) -> list[dict]:
     os.remove(filename)
     return new_corpus
 
+def generate_markdown(zotero_items):
+    """
+    根据给定的 Zotero 条目列表，生成一个包含标题和摘要的 Markdown 文档字符串。
+    
+    参数:
+        zotero_items (list of dict): 从 pyzotero 获取的条目列表，每个条目为一个 dict，
+                                      其中标题在 entry['data']['title']，
+                                      摘要在 entry['data']['abstractNote']。
+    返回:
+        str: 完整的 Markdown 文档字符串。
+    """
+    md_lines = []
+    for entry in zotero_items:
+        # 从 entry 中提取标题
+        title = entry.get('data', {}).get('title', '').strip()
+        # 从 entry 中提取摘要
+        abstract = entry.get('data', {}).get('abstractNote', '').strip()
+        add_date = entry.get('data', {}).get('dateAdded', '').strip()
+        # 如果标题或摘要都为空，则跳过该条目
+        if not title and not abstract:
+            continue
+        
+        # 添加一级标题
+        md_lines.append(f"# {title}")
+        md_lines.append("")  # 空行，用于 Markdown 格式
+        
+        # 添加日期
+        md_lines.append(f"**adding date** {add_date}")
+        md_lines.append("")  # 空行，用于 Markdown 格式
+        # 添加摘要内容
+        md_lines.append(abstract)
+        md_lines.append("")  # 空行
+        
+        # 添加分隔线，分割不同条目
+        md_lines.append("---")
+        md_lines.append("")  # 空行
+
+    # 将所有行拼接为一个字符串并返回
+    return "\n".join(md_lines)
+
+def generate_interest_statement(corpus:list[dict]) -> str:
+    llm = get_llm()
+    corpus = sorted(corpus, key=lambda x: datetime.strptime(x['data']['dateAdded'], '%Y-%m-%dT%H:%M:%SZ'),reverse=True)
+    prompt = generate_markdown(corpus)
+    llm_output = llm.generate(
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+Act as an Academic Literature Consultant.
+Your goal is to precisely identify and summarize the academic interests of the user, 
+based on the meta data of papers provided from their Zotero library.
+You must be keen enough to the evolution of the user's scientific interest over time, and pay more attention to summarizing the user's recent research focus.
+Now following is the meta data of the papers:
+
+---
+
+""",
+                },
+                {"role": "user", "content": prompt},
+            ]
+        )
+    logger.debug(llm_output)
+    return llm_output
 
 def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
     client = arxiv.Client(num_retries=10,delay_seconds=10)
@@ -103,7 +168,7 @@ if __name__ == '__main__':
     add_argument('--zotero_id', type=str, help='Zotero user ID')
     add_argument('--zotero_key', type=str, help='Zotero API key')
     add_argument('--zotero_ignore',type=str,help='Zotero collection to ignore, using gitignore-style pattern.')
-    add_argument('--interest_stat', type=str, help='Research Interest Statement')
+    add_argument('--interest_stat', type=str, help='Research Interest Statement', default = None)
     add_argument('--send_empty', type=bool, help='If get no arxiv paper, send empty email',default=False)
     add_argument('--max_paper_num', type=int, help='Maximum number of papers to recommend',default=100)
     add_argument('--arxiv_query', type=str, help='Arxiv search query')
@@ -155,14 +220,36 @@ if __name__ == '__main__':
         logger.remove()
         logger.add(sys.stdout, level="INFO")
 
-    logger.info("Retrieving Zotero corpus...")
-    # corpus = get_zotero_corpus(args.zotero_id, args.zotero_key) # TODO: add cache
-    corpus = []
-    logger.info(f"Retrieved {len(corpus)} papers from Zotero.")
-    if args.zotero_ignore:
-        logger.info(f"Ignoring papers in:\n {args.zotero_ignore}...")
-        corpus = filter_corpus(corpus, args.zotero_ignore)
-        logger.info(f"Remaining {len(corpus)} papers after filtering.")
+    # Set global LLM
+    if args.use_llm_api:
+        logger.info("Using OpenAI API as global LLM.")
+        set_global_llm(api_key=args.openai_api_key, base_url=args.openai_api_base, model=args.model_name, lang=args.language)
+    else:
+        logger.info("Using Local LLM as global LLM.")
+        set_global_llm(lang=args.language)
+
+    # If the INTEREST_STAT is not provided, generate it through Zotero Library.
+    if args.interest_stat is None:
+        fresh_interest = os.path.exists('interest_stat.md') and time.time() - os.path.getmtime('interest_stat.md') < 86400 * 10
+        if not fresh_interest:
+            logger.info("Generate interest statement through Zotero Library.")
+            logger.info("Retrieving Zotero corpus...")
+            corpus = get_zotero_corpus(args.zotero_id, args.zotero_key) # TODO: add cache
+            logger.info(f"Retrieved {len(corpus)} papers from Zotero.")
+            if args.zotero_ignore:
+                logger.info(f"Ignoring papers in:\n {args.zotero_ignore}...")
+                corpus = filter_corpus(corpus, args.zotero_ignore)
+                logger.info(f"Remaining {len(corpus)} papers after filtering.")
+            interest_stat = generate_interest_statement(corpus)
+            with open("interest_stat.md", "w", encoding="utf-8") as f:
+                f.write(interest_stat)
+        else:
+            interest_stat = open('interest_stat.md','r', encoding='utf-8').read()
+    else:
+        interest_stat = args.interest_stat
+        
+    
+    # Retrieve Arxiv papers
     logger.info("Retrieving Arxiv papers...")
     papers = get_arxiv_paper(args.arxiv_query, args.debug)
 
@@ -174,13 +261,7 @@ if __name__ == '__main__':
         logger.info("Reranking papers...")
         if args.max_paper_num != -1:
             papers = papers[:args.max_paper_num]
-        if args.use_llm_api:
-            logger.info("Using OpenAI API as global LLM.")
-            set_global_llm(api_key=args.openai_api_key, base_url=args.openai_api_base, model=args.model_name, lang=args.language)
-        else:
-            logger.info("Using Local LLM as global LLM.")
-            set_global_llm(lang=args.language)
-        papers = rerank_paper(papers, args.interest_stat)
+        papers = rerank_paper(papers, interest_stat)
 
     html = render_email(papers)
     logger.info("Sending email...")
