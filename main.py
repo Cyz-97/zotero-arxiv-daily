@@ -244,8 +244,10 @@ if __name__ == '__main__':
             with open("interest_stat.md", "w", encoding="utf-8") as f:
                 f.write(interest_stat)
         else:
+            logger.info("Use cached interest statement.")
             interest_stat = open('interest_stat.md','r', encoding='utf-8').read()
     else:
+        logger.info("Use interest statement specified by user.")
         interest_stat = args.interest_stat
         
     
