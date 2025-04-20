@@ -89,7 +89,7 @@ def generate_markdown(zotero_items):
 def generate_interest_statement(corpus:list[dict]) -> str:
     llm = get_llm()
     corpus = sorted(corpus, key=lambda x: datetime.strptime(x['data']['dateAdded'], '%Y-%m-%dT%H:%M:%SZ'),reverse=True)
-    prompt = generate_markdown(corpus)
+    prompt = generate_markdown(corpus[:100])
     llm_output = llm.generate(
             messages=[
                 {
