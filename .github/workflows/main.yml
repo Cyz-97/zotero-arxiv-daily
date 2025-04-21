@@ -35,8 +35,8 @@ jobs:
           USE_LLM_API: ${{ secrets.USE_LLM_API }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
-          MODEL_NAME: ${{ var.MODEL_NAME }}
-          LANGUAGE: ${{ var.LANGUAGE }}
-          INTEREST_STAT: ${{ var.INTEREST_STAT }}
+          MODEL_NAME: ${{ vars.MODEL_NAME }}
+          LANGUAGE: ${{ vars.LANGUAGE }}
+          INTEREST_STAT: ${{ vars.INTEREST_STAT }}
         run: |
           uv run main.py
